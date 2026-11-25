@@ -34,61 +34,7 @@
   import { isNative, getServerUrl, getAuthToken, apiUrl } from '../../lib/platform.js';
   import { acquireScreenWakeLock } from '../../lib/wake-lock.js';
   import { foldText } from '../../lib/search-text.js';
-
-  // Build a diary item whose stored nutrition is already scaled to the
-  // consumed portion. Diary totals are nutrition × quantity and `portion`
-  // is display-only (src/lib/nutrition.js), so a portion/unit override MUST
-  // rescale nutrition here — otherwise a food stored per 100 g logs its
-  // per-100 values under whatever portion label the AI supplied (issue:
-  // "1 tbsp olive oil = 822 kcal"). Cross-unit overrides are refused rather
-  // than silently treated as the food's base unit.
-  function _foodAltUnits(food) {
-    if (Array.isArray(food?.alt_units)) return food.alt_units;
-    if (typeof food?.alt_units === 'string' && food.alt_units.trim()) {
-      try { const a = JSON.parse(food.alt_units); return Array.isArray(a) ? a : null; } catch { return null; }
-    }
-    return null;
-  }
-  function _buildLoggedItem(food, { portionOverride, unitOverride, quantity } = {}) {
-    const basePortion = Number(food.portion);
-    const hasBase = Number.isFinite(basePortion) && basePortion > 0;
-    const baseUnit = (food.unit || 'g').trim();
-    const effUnit = (unitOverride || baseUnit || 'g').trim();
-    if (unitOverride && baseUnit && effUnit.toLowerCase() !== baseUnit.toLowerCase()) {
-      throw new Error(
-        `Unit mismatch: "${food.name}" is stored in ${baseUnit}, but ${effUnit} was requested. ` +
-        `Convert the amount to ${baseUnit} and retry (e.g. 1 tbsp olive oil ≈ 14 g).`
-      );
-    }
-    const hasOverride = Number.isFinite(portionOverride) && portionOverride > 0;
-    if (hasOverride && _foodAltUnits(food)) {
-      throw new Error(
-        `"${food.name}" uses custom alt-units, so a numeric portion override can't be scaled safely. ` +
-        `Log it without a portion, or edit the food's serving in Foods.`
-      );
-    }
-    if (hasOverride && !hasBase) {
-      throw new Error(
-        `"${food.name}" has no baseline portion, so a portion override can't be scaled. ` +
-        `Log it without a portion.`
-      );
-    }
-    const effPortion = hasOverride ? portionOverride : (hasBase ? basePortion : null);
-    const factor = (hasOverride && hasBase) ? (effPortion / basePortion) : 1;
-    const nutrition = {};
-    for (const [k, v] of Object.entries(food.nutrition || {})) {
-      nutrition[k] = (k === '_derived' || typeof v !== 'number')
-        ? v
-        : Math.round(v * factor * 100) / 100;
-    }
-    return {
-      ...food,
-      portion: effPortion ?? undefined,
-      unit: effUnit,
-      quantity,
-      nutrition,
-    };
-  }
+  import { buildLoggedItem } from '../../lib/log-food-scale.js';
 
 
   // ── State ──────────────────────────────────────────────────────────────────
@@ -638,7 +584,7 @@
             // Single exact local hit — use it.
             const food = exactLocal[0];
             try {
-              const item = _buildLoggedItem(food, { portionOverride, unitOverride, quantity });
+              const item = buildLoggedItem(food, { portionOverride, unitOverride, quantity });
               const { addDiaryItem } = await import('../../stores/diary.js');
               await addDiaryItem(item, mealIdx, date);
               const kcal = Math.round((item.nutrition?.calories || 0) * quantity);
@@ -670,7 +616,7 @@
           if (substringLocal.length === 1) {
             const food = substringLocal[0];
             try {
-              const item = _buildLoggedItem(food, { portionOverride, unitOverride, quantity });
+              const item = buildLoggedItem(food, { portionOverride, unitOverride, quantity });
               const { addDiaryItem } = await import('../../stores/diary.js');
               await addDiaryItem(item, mealIdx, date);
               const kcal = Math.round((item.nutrition?.calories || 0) * quantity);
@@ -737,7 +683,7 @@
                 // Create in local catalog so future asks hit local tier and
                 // the food row exists for the diary item to reference.
                 const saved = await NtApi.createFood({ ...chosenOff, created_at: new Date().toISOString() });
-                const item = _buildLoggedItem(saved, { portionOverride, unitOverride, quantity });
+                const item = buildLoggedItem(saved, { portionOverride, unitOverride, quantity });
                 const { addDiaryItem } = await import('../../stores/diary.js');
                 await addDiaryItem(item, mealIdx, date);
                 const kcal = Math.round((item.nutrition?.calories || 0) * quantity);
