@@ -186,6 +186,9 @@
     "sharing": {
       "section": "Compartir alimentos"
     },
+    "admin_overview": {
+      "section": "Vista general de admin"
+    },
     "profile_hero": {
       "label_fallback": "Mi perfil",
       "subtitle_empty": "Toca para agregar tu nombre y foto"

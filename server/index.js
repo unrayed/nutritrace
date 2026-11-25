@@ -36,6 +36,7 @@ import oidcRoutes       from './routes/oidc.js';
 import oidcAdminRoutes  from './routes/oidc-admin.js';
 import apiTokensRoutes  from './routes/api-tokens.js';
 import webhooksRoutes   from './routes/webhooks.js';
+import adminOverviewRoutes from './routes/admin-overview.js';
 import apiV1Routes      from './routes/api/v1/index.js';
 import mcpRoutes        from './routes/mcp.js';
 import nutritionImportRoutes from './routes/nutrition-import.js';
@@ -237,6 +238,9 @@ router.use('/api/admin/api-tokens', apiTokensRoutes);
 // at this route, an admin can configure webhooks even before enabling
 // the flag.
 router.use('/api/admin/webhooks', webhooksRoutes);
+// Read-only instance data browser: every user's profile, diary, foods,
+// meals, activity, wellness and fasts. Admin-only, no write endpoints.
+router.use('/api/admin/overview', adminOverviewRoutes);
 // Federation API itself — Bearer-token auth, scope-gated. Mounted at
 // /api/v1 so the version is part of the contract URL. See
 // docs/federation.md for the wire format.

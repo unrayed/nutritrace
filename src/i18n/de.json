@@ -195,6 +195,9 @@
     "sharing": {
       "section": "Lebensmittel teilen"
     },
+    "admin_overview": {
+      "section": "Admin-Übersicht"
+    },
     "profile_hero": {
       "label_fallback": "Mein Profil",
       "subtitle_empty": "Tippe hier, um deinen Namen und dein Foto hinzuzufügen"

@@ -51,6 +51,7 @@
   import Updates           from './settings/Updates.svelte';
   import HelpImprove       from './settings/HelpImprove.svelte';
   import Users             from './settings/Users.svelte';
+  import AdminOverview     from './settings/AdminOverview.svelte';
   import Authentication    from './settings/Authentication.svelte';
   import Email             from './settings/Email.svelte';
   import ApiTokens         from './settings/ApiTokens.svelte';
@@ -250,6 +251,7 @@
     updates:           { titleKey: 'settings.updates.section',           icon: 'system_update' },
     helpImprove:       { titleKey: 'settings.diagnostics.section',       icon: 'troubleshoot' },
     users:             { titleKey: 'settings.users.section',             icon: 'group' },
+    adminOverview:     { titleKey: 'settings.admin_overview.section',    icon: 'admin_panel_settings' },
     authentication:    { titleKey: 'settings.authentication.section',    icon: 'shield_person' },
     email:             { titleKey: 'settings.email.section',             icon: 'mail' },
     apiTokens:         { titleKey: 'settings.api_tokens.section',        icon: 'key' },
@@ -284,6 +286,7 @@
     updates:           Updates,
     helpImprove:       HelpImprove,
     users:             Users,
+    adminOverview:     AdminOverview,
     authentication:    Authentication,
     email:             Email,
     apiTokens:         ApiTokens,
@@ -321,6 +324,7 @@
     email:             ['email','smtp','mail','password reset','invites','notifications'],
     profile:           ['profile','my profile','account','name','nickname','birthday','dob','gender','sex','avatar','log out','logout','sign out','password','change password','biometric','fingerprint','face unlock','face id'],
     users:             ['users','user management','accounts','login','admin','register','invite','revoke','pending invite','session','session duration','password policy','strong password','strong passwords','require strong','zxcvbn'],
+    adminOverview:     ['admin overview','admin','instance','all users','user data','diary','foods','meals','activity','wellness','inspect'],
     apiTokens:         ['api','api tokens','token','federation','cooktrace','lifttrace','bearer','integration','integrations','external','third-party','third party'],
     webhooks:          ['webhooks','webhook','automation','n8n','home assistant','ifttt','push','event','integration','integrations','http post','callback url','signature','hmac','secret'],
     helpImprove:       ['diagnostics','logs','verbose','calibration','export','bug','report','troubleshoot'],
@@ -649,6 +653,13 @@
       <span>{$_('settings.users.section')}</span>
       <span class="material-symbols-rounded chevron">expand_more</span>
     </button>
+    {#if $userMgmtActive && $currentUser?.role === 'admin'}
+      <button class="section-toggle" class:hidden={!sectionVisible(settingsQuery, 'adminOverview')} class:active={currentSection === 'adminOverview'} aria-current={currentSection === 'adminOverview' ? 'page' : undefined} on:click={() => toggleSection('adminOverview')}>
+        <span class="material-symbols-rounded si">admin_panel_settings</span>
+        <span>{$_('settings.admin_overview.section')}</span>
+        <span class="material-symbols-rounded chevron">expand_more</span>
+      </button>
+    {/if}
     {#if $userMgmtActive && $currentUser?.role === 'admin'}
       <button class="section-toggle" class:hidden={!sectionVisible(settingsQuery, 'authentication')} class:active={currentSection === 'authentication'} aria-current={currentSection === 'authentication' ? 'page' : undefined} on:click={() => toggleSection('authentication')}>
         <span class="material-symbols-rounded si">vpn_key</span>

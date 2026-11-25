@@ -186,6 +186,9 @@
     "sharing": {
       "section": "Поделиться питанием"
     },
+    "admin_overview": {
+      "section": "Обзор администратора"
+    },
     "profile_hero": {
       "label_fallback": "Мой профиль",
       "subtitle_empty": "Нажмите, чтобы добавить свое имя и фото"
