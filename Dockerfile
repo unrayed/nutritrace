@@ -6,7 +6,10 @@ COPY package*.json ./
 # must exist before npm install runs. Copy it explicitly here so we don't
 # bust the rest of the source-code Docker layer cache on every change.
 COPY scripts/ ./scripts/
-RUN npm install
+# --include=dev: Coolify injects NODE_ENV=production as a build arg, which
+# would otherwise make `npm install` skip devDependencies (vite et al.) and
+# break `npm run build`.
+RUN npm install --include=dev
 COPY . .
 RUN npm run build
 
