@@ -32,6 +32,7 @@
 
   let activeTab = 'diary';
   let tabsData = {};
+  let openDays = {};
 
   let rangeFrom = _defaultFrom();
   let rangeTo = localDateStr();
@@ -91,6 +92,7 @@
     detailState = 'loading';
     detailError = '';
     tabsData = {};
+    openDays = {};
     loadDetail();
     loadTab(activeTab);
   }
@@ -181,6 +183,7 @@
       rangeError = $_('settings.admin_overview.range_invalid');
       return;
     }
+    openDays = {};
     if (isRangeTab) loadTab(activeTab);
   }
 
@@ -292,6 +295,100 @@
     return out;
   }
 
+  // Compact P/C/F figures for dense rows. Fiber, sugar and sodium stay at the
+  // day-total level so item rows do not become a wall of chips.
+  function coreMacros(nutrition) {
+    const n = isObj(nutrition) ? nutrition : {};
+    const out = [];
+    const add = (shortKey, labelKey, value) => {
+      const v = numOrNull(value);
+      if (v != null) {
+        out.push({
+          short: $_(shortKey),
+          label: $_(labelKey),
+          value: fmtNum(v, 1),
+        });
+      }
+    };
+    add('settings.admin_overview.macro_protein_short', 'settings.admin_overview.macro_protein', n.proteins ?? n.protein);
+    add('settings.admin_overview.macro_carbs_short', 'settings.admin_overview.macro_carbs', n.carbohydrates ?? n.carbs);
+    add('settings.admin_overview.macro_fat_short', 'settings.admin_overview.macro_fat', n.fat);
+    return out;
+  }
+
+  // Macro composition by energy (protein/carbs 4 kcal/g, fat 9 kcal/g). Returns
+  // null when there is no macro data, so the bar can show an honest empty state
+  // instead of inventing a split.
+  function macroSplit(totals) {
+    const p = numOrNull(totals?.protein);
+    const c = numOrNull(totals?.carbs);
+    const f = numOrNull(totals?.fat);
+    if (p == null && c == null && f == null) return null;
+    const pe = (p || 0) * 4;
+    const ce = (c || 0) * 4;
+    const fe = (f || 0) * 9;
+    const total = pe + ce + fe;
+    if (!(total > 0)) return null;
+    let protein = Math.round((pe / total) * 100);
+    let carbs = Math.round((ce / total) * 100);
+    let fat = 100 - protein - carbs;
+    if (fat < 0) {
+      carbs = Math.max(0, carbs + fat);
+      fat = 0;
+    }
+    return { protein, carbs, fat };
+  }
+
+  function macroAria(totals) {
+    const split = macroSplit(totals);
+    if (!split) return $_('settings.admin_overview.macro_none');
+    return $_('settings.admin_overview.macro_share_aria', {
+      values: { protein: split.protein, carbs: split.carbs, fat: split.fat },
+    });
+  }
+
+  // At-a-glance summary of the selected range. Derived entirely from the rows
+  // already fetched for the Diary tab; no extra request.
+  function rangeSummary(rows) {
+    const days = Array.isArray(rows) ? rows : [];
+    const kcal = [];
+    let pSum = 0, cSum = 0, fSum = 0, pN = 0, cN = 0, fN = 0;
+    const bars = [];
+    for (const day of days) {
+      const t = dayTotals(day);
+      const k = numOrNull(t.kcal);
+      if (k != null) kcal.push(k);
+      const p = numOrNull(t.protein);
+      const c = numOrNull(t.carbs);
+      const f = numOrNull(t.fat);
+      if (p != null) { pSum += p; pN++; }
+      if (c != null) { cSum += c; cN++; }
+      if (f != null) { fSum += f; fN++; }
+      bars.push({ kcal: k, date: fmtDate(day.date) });
+    }
+    const maxKcal = kcal.length ? Math.max(...kcal) : 0;
+    for (const b of bars) {
+      b.pct = maxKcal > 0 && b.kcal != null ? Math.max(6, Math.round((b.kcal / maxKcal) * 100)) : 0;
+    }
+    return {
+      days: days.length,
+      avgKcal: kcal.length ? kcal.reduce((a, b) => a + b, 0) / kcal.length : null,
+      avgProtein: pN ? pSum / pN : null,
+      avgCarbs: cN ? cSum / cN : null,
+      avgFat: fN ? fSum / fN : null,
+      bars,
+      maxKcal,
+    };
+  }
+
+  function dayKey(day, idx) {
+    return text(day?.date) || `#${idx}`;
+  }
+
+  function toggleDay(key) {
+    openDays = { ...openDays, [key]: !openDays[key] };
+  }
+
   function portionText(row) {
     const parts = [];
     const q = numOrNull(row?.quantity);
@@ -379,6 +476,13 @@
     const d = new Date(`${String(v).slice(0, 10)}T00:00:00`);
     if (Number.isNaN(d.getTime())) return text(v);
     return d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
+  }
+
+  function fmtShortDate(v) {
+    if (!v) return '';
+    const d = new Date(`${String(v).slice(0, 10)}T00:00:00`);
+    if (Number.isNaN(d.getTime())) return text(v);
+    return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
   }
 
   function fmtDateTime(v) {
@@ -789,98 +893,166 @@
                 {/if}
 
                 {#if activeTab === 'diary'}
+                  {@const range = rangeSummary(tabRows)}
+                  <div class="ao-range-summary" aria-label={$_('settings.admin_overview.range_heading')}>
+                    <div class="ao-rs-head">
+                      <span class="ao-rs-title">{$_('settings.admin_overview.range_heading')}</span>
+                      <span class="ao-rs-range">{fmtShortDate(rangeFrom)} – {fmtShortDate(rangeTo)}</span>
+                    </div>
+                    <div class="ao-rs-body">
+                      <div class="ao-rs-stats">
+                        <div class="ao-rs-stat">
+                          <span class="ao-rs-value">{fmtNum(range.days)}</span>
+                          <span class="ao-rs-label">{$_('settings.admin_overview.range_days')}</span>
+                        </div>
+                        <div class="ao-rs-stat">
+                          <span class="ao-rs-value">{fmtNum(range.avgKcal)}</span>
+                          <span class="ao-rs-label">{$_('settings.admin_overview.range_avg_kcal')}</span>
+                        </div>
+                        <div class="ao-rs-macros">
+                          <span class="ao-rs-macro p"><b>{$_('settings.admin_overview.macro_protein_short')}</b> {fmtNum(range.avgProtein, 1)}g</span>
+                          <span class="ao-rs-macro c"><b>{$_('settings.admin_overview.macro_carbs_short')}</b> {fmtNum(range.avgCarbs, 1)}g</span>
+                          <span class="ao-rs-macro f"><b>{$_('settings.admin_overview.macro_fat_short')}</b> {fmtNum(range.avgFat, 1)}g</span>
+                        </div>
+                      </div>
+                      {#if range.bars.length}
+                        <div class="ao-rs-bars" role="img" aria-label={$_('settings.admin_overview.range_kcal_aria')}>
+                          {#each range.bars as b}
+                            <span
+                              class="ao-rs-bar"
+                              style={`height:${b.pct}%`}
+                              title={b.kcal != null ? `${b.date} · ${fmtNum(b.kcal)} ${$_('settings.admin_overview.kcal')}` : b.date}></span>
+                          {/each}
+                        </div>
+                      {/if}
+                    </div>
+                  </div>
+
                   <div class="ao-day-list">
                     {#each tabRows as day, di}
+                      {@const key = dayKey(day, di)}
+                      {@const open = !!openDays[key]}
                       {@const totals = dayTotals(day)}
                       {@const items = itemsOf(day)}
                       {@const waters = waterEntries(day)}
                       {@const stats = bodyStats(day)}
                       {@const mealsDone = completedMeals(day)}
-                      <div class="card settings-card ao-day">
-                        <div class="ao-day-head">
+                      {@const split = macroSplit(totals)}
+                      <div class="card settings-card ao-day" class:open={open}>
+                        <div class="ao-day-summary">
                           <div class="ao-day-date">
                             <span class="material-symbols-rounded">calendar_month</span>
                             <span>{fmtDate(day.date)}</span>
                           </div>
-                          <div class="ao-day-head-right">
-                            <span class="ao-day-kcal">{fmtNum(totals.kcal)} {$_('settings.admin_overview.kcal')}</span>
-                            <span class="ao-day-items">{fmtNum(totals.item_count)} {$_('settings.admin_overview.item_count')}</span>
+                          <div class="ao-day-macrobar" role="img" aria-label={macroAria(totals)}>
+                            {#if split}
+                              <span class="ao-mb-seg p" style={`flex:0 0 ${split.protein}%`}></span>
+                              <span class="ao-mb-seg c" style={`flex:0 0 ${split.carbs}%`}></span>
+                              <span class="ao-mb-seg f" style={`flex:0 0 ${split.fat}%`}></span>
+                            {:else}
+                              <span class="ao-mb-empty"></span>
+                            {/if}
+                          </div>
+                          <div class="ao-day-kcal">
+                            <span>{fmtNum(totals.kcal)}</span>
+                            <span class="ao-day-kcal-unit">{$_('settings.admin_overview.kcal')}</span>
+                          </div>
+                          <div class="ao-day-meta">
+                            {#if totals.water_ml != null}
+                              <span class="ao-day-water">
+                                <span class="material-symbols-rounded">water_drop</span>
+                                {fmtNum(totals.water_ml)} ml
+                              </span>
+                            {/if}
+                            <button
+                              type="button"
+                              class="ao-day-toggle"
+                              aria-expanded={open}
+                              aria-controls={`ao-day-body-${di}`}
+                              aria-label={open
+                                ? $_('settings.admin_overview.hide_items', { values: { count: fmtNum(totals.item_count) } })
+                                : $_('settings.admin_overview.show_items', { values: { count: fmtNum(totals.item_count) } })}
+                              on:click={() => toggleDay(key)}>
+                              <span class="ao-day-toggle-text" aria-hidden="true">
+                                {open
+                                  ? $_('settings.admin_overview.hide_items', { values: { count: fmtNum(totals.item_count) } })
+                                  : $_('settings.admin_overview.show_items', { values: { count: fmtNum(totals.item_count) } })}
+                              </span>
+                              <span class="material-symbols-rounded ao-day-chevron" class:open aria-hidden="true">expand_more</span>
+                            </button>
                           </div>
                         </div>
 
-                        <div class="ao-day-totals">
-                          {#each macroList({ proteins: totals.protein, carbohydrates: totals.carbs, fat: totals.fat, fiber: totals.fiber, sugars: totals.sugar, sodium: totals.sodium }) as m}
-                            <span class="ao-macro"><b>{m.label}</b> {m.value}{m.unit}</span>
-                          {/each}
-                          {#if totals.water_ml != null}
-                            <span class="ao-macro water"><b>{$_('settings.admin_overview.water')}</b> {fmtNum(totals.water_ml)} ml</span>
-                          {/if}
-                        </div>
+                        {#if open}
+                          <div class="ao-day-body" id={`ao-day-body-${di}`}>
+                            <div class="ao-day-totals">
+                              {#each macroList({ proteins: totals.protein, carbohydrates: totals.carbs, fat: totals.fat, fiber: totals.fiber, sugars: totals.sugar, sodium: totals.sodium }) as m}
+                                <span class="ao-macro"><b>{m.label}</b> {m.value}{m.unit}</span>
+                              {/each}
+                              {#if totals.water_ml != null}
+                                <span class="ao-macro water"><b>{$_('settings.admin_overview.water')}</b> {fmtNum(totals.water_ml)} ml</span>
+                              {/if}
+                            </div>
 
-                        {#if items.length}
-                          <div class="ao-items">
-                            {#each items as item, ii}
-                              {@const macros = macroList(scaledNutrition(item))}
-                              <div class="ao-item">
-                                <div class="ao-item-line">
-                                  <span class="ao-item-name">{text(item.name) || $_('settings.admin_overview.unnamed')}</span>
-                                  <span class="ao-item-kcal">{fmtNum(scaledKcal(item))} {$_('settings.admin_overview.kcal')}</span>
-                                </div>
-                                <div class="ao-item-meta">
-                                  {#if portionText(item)}<span>{portionText(item)}</span>{/if}
-                                  {#if text(item.category)}<span class="chip ao-chip">{text(item.category)}</span>{/if}
-                                </div>
-                                {#if macros.length}
-                                  <div class="ao-macro-row">
-                                    {#each macros as m}
-                                      <span class="ao-macro"><b>{m.label}</b> {m.value}{m.unit}</span>
-                                    {/each}
+                            {#if items.length}
+                              <div class="ao-items">
+                                {#each items as item}
+                                  {@const figs = coreMacros(scaledNutrition(item))}
+                                  <div class="ao-item">
+                                    <span class="ao-item-name" title={text(item.name) || $_('settings.admin_overview.unnamed')}>{text(item.name) || $_('settings.admin_overview.unnamed')}</span>
+                                    <span class="ao-item-portion">{portionText(item) || '—'}</span>
+                                    <span class="ao-item-kcal">{fmtNum(scaledKcal(item))} <small>{$_('settings.admin_overview.kcal')}</small></span>
+                                    <span class="ao-item-figs">
+                                      {#each figs as m}
+                                        <span class="ao-fig" title={m.label} aria-label={`${m.label} ${m.value}g`}><b>{m.short}</b>{m.value}g</span>
+                                      {/each}
+                                    </span>
                                   </div>
-                                {/if}
+                                {/each}
                               </div>
-                            {/each}
-                          </div>
-                        {:else}
-                          <p class="ao-empty-line">{$_('settings.admin_overview.empty_diary')}</p>
-                        {/if}
+                            {:else}
+                              <p class="ao-empty-line">{$_('settings.admin_overview.empty_diary')}</p>
+                            {/if}
 
-                        {#if waters.length}
-                          <div class="ao-day-section">
-                            <div class="ao-day-section-label">{$_('settings.admin_overview.water')}</div>
-                            <div class="ao-pill-row">
-                              {#each waters as w, wi}
-                                <span class="chip">{waterLabel(w)}</span>
-                              {/each}
-                            </div>
-                          </div>
-                        {/if}
+                            {#if waters.length}
+                              <div class="ao-day-section">
+                                <div class="ao-day-section-label">{$_('settings.admin_overview.water')}</div>
+                                <div class="ao-pill-row">
+                                  {#each waters as w}
+                                    <span class="chip">{waterLabel(w)}</span>
+                                  {/each}
+                                </div>
+                              </div>
+                            {/if}
 
-                        {#if stats.length}
-                          <div class="ao-day-section">
-                            <div class="ao-day-section-label">{$_('settings.admin_overview.body_stats')}</div>
-                            <div class="ao-pill-row">
-                              {#each stats as s}
-                                <span class="chip">{s.label}: {s.value}</span>
-                              {/each}
-                            </div>
-                          </div>
-                        {/if}
+                            {#if stats.length}
+                              <div class="ao-day-section">
+                                <div class="ao-day-section-label">{$_('settings.admin_overview.body_stats')}</div>
+                                <div class="ao-pill-row">
+                                  {#each stats as s}
+                                    <span class="chip">{s.label}: {s.value}</span>
+                                  {/each}
+                                </div>
+                              </div>
+                            {/if}
 
-                        {#if mealsDone.length}
-                          <div class="ao-day-section">
-                            <div class="ao-day-section-label">{$_('settings.admin_overview.completed_meals')}</div>
-                            <div class="ao-pill-row">
-                              {#each mealsDone as m}
-                                <span class="chip accent">{m}</span>
-                              {/each}
-                            </div>
-                          </div>
-                        {/if}
+                            {#if mealsDone.length}
+                              <div class="ao-day-section">
+                                <div class="ao-day-section-label">{$_('settings.admin_overview.completed_meals')}</div>
+                                <div class="ao-pill-row">
+                                  {#each mealsDone as m}
+                                    <span class="chip accent">{m}</span>
+                                  {/each}
+                                </div>
+                              </div>
+                            {/if}
 
-                        {#if text(day.notes)}
-                          <div class="ao-day-section">
-                            <div class="ao-day-section-label">{$_('settings.admin_overview.notes')}</div>
-                            <p class="ao-notes">{text(day.notes)}</p>
+                            {#if text(day.notes)}
+                              <div class="ao-day-section">
+                                <div class="ao-day-section-label">{$_('settings.admin_overview.notes')}</div>
+                                <p class="ao-notes">{text(day.notes)}</p>
+                              </div>
+                            {/if}
                           </div>
                         {/if}
                       </div>
@@ -890,23 +1062,23 @@
                 {:else if activeTab === 'foods'}
                   <div class="card settings-card ao-rows">
                     {#each tabRows as food}
-                      {@const macros = macroList(nutritionOf(food))}
+                      {@const figs = coreMacros(nutritionOf(food))}
                       <div class="ao-row">
                         <div class="ao-row-main">
                           <span class="ao-row-name">{text(food.name) || $_('settings.admin_overview.unnamed')}</span>
-                          {#if text(food.brand)}<span class="ao-row-sub">{$_('settings.admin_overview.brand')}: {text(food.brand)}</span>{/if}
                           <div class="ao-row-tags">
+                            {#if text(food.brand)}<span class="ao-row-sub">{$_('settings.admin_overview.brand')}: {text(food.brand)}</span>{/if}
                             {#if text(food.category)}<span class="chip ao-chip">{text(food.category)}</span>{/if}
                             {#if portionText(food)}<span class="ao-row-sub">{portionText(food)}</span>{/if}
                             {#if text(food.barcode)}<span class="ao-row-sub">{$_('settings.admin_overview.barcode')}: {text(food.barcode)}</span>{/if}
                           </div>
                         </div>
                         <div class="ao-row-right">
-                          <span class="ao-row-kcal">{fmtNum(kcalOf(food))} {$_('settings.admin_overview.kcal')}</span>
-                          {#if macros.length}
-                            <div class="ao-macro-row">
-                              {#each macros as m}
-                                <span class="ao-macro"><b>{m.label}</b> {m.value}{m.unit}</span>
+                          <span class="ao-row-kcal">{fmtNum(kcalOf(food))} <small>{$_('settings.admin_overview.kcal')}</small></span>
+                          {#if figs.length}
+                            <div class="ao-figures">
+                              {#each figs as m}
+                                <span class="ao-fig" title={m.label} aria-label={`${m.label} ${m.value}g`}><b>{m.short}</b>{m.value}g</span>
                               {/each}
                             </div>
                           {/if}
@@ -916,44 +1088,45 @@
                   </div>
 
                 {:else if activeTab === 'meals'}
-                  <div class="ao-rows">
+                  <div class="card settings-card ao-rows">
                     {#each tabRows as meal}
-                      {@const macros = macroList(nutritionOf(meal))}
+                      {@const figs = coreMacros(nutritionOf(meal))}
                       {@const ingredients = ingredientsOf(meal)}
-                      <div class="card settings-card ao-row-card">
-                        <div class="ao-row">
-                          <div class="ao-row-main">
-                            <span class="ao-row-name">{text(meal.name) || $_('settings.admin_overview.unnamed')}</span>
-                            <div class="ao-row-tags">
-                              <span class="chip accent">{meal.is_recipe ? $_('settings.admin_overview.recipe') : $_('settings.admin_overview.meal')}</span>
-                              {#if numOrNull(meal.servings) != null}<span class="ao-row-sub">{$_('settings.admin_overview.servings')}: {fmtNum(meal.servings)}</span>{/if}
-                              {#if portionText(meal)}<span class="ao-row-sub">{portionText(meal)}</span>{/if}
-                            </div>
+                      <div class="ao-row">
+                        <div class="ao-row-main">
+                          <span class="ao-row-name">{text(meal.name) || $_('settings.admin_overview.unnamed')}</span>
+                          <div class="ao-row-tags">
+                            <span class="chip accent">{meal.is_recipe ? $_('settings.admin_overview.recipe') : $_('settings.admin_overview.meal')}</span>
+                            {#if numOrNull(meal.servings) != null}<span class="ao-row-sub">{$_('settings.admin_overview.servings')}: {fmtNum(meal.servings)}</span>{/if}
+                            {#if portionText(meal)}<span class="ao-row-sub">{portionText(meal)}</span>{/if}
                           </div>
-                          <div class="ao-row-right">
-                            <span class="ao-row-kcal">{fmtNum(kcalOf(meal))} {$_('settings.admin_overview.kcal')}</span>
-                            {#if macros.length}
-                              <div class="ao-macro-row">
-                                {#each macros as m}
-                                  <span class="ao-macro"><b>{m.label}</b> {m.value}{m.unit}</span>
+                          {#if ingredients.length}
+                            <details class="ao-meal-details">
+                              <summary>
+                                <span class="material-symbols-rounded ao-meal-chevron" aria-hidden="true">chevron_right</span>
+                                <span>{$_('settings.admin_overview.ingredients')} ({ingredients.length})</span>
+                              </summary>
+                              <div class="ao-ingredients">
+                                {#each ingredients as ing}
+                                  <div class="ao-ingredient">
+                                    <span>{ing.name}</span>
+                                    {#if ing.portion}<span class="ao-row-sub">{ing.portion}</span>{/if}
+                                  </div>
                                 {/each}
                               </div>
-                            {/if}
-                          </div>
+                            </details>
+                          {:else}
+                            <span class="ao-row-sub">{$_('settings.admin_overview.no_ingredients')}</span>
+                          {/if}
                         </div>
-                        <div class="ao-day-section">
-                          <div class="ao-day-section-label">{$_('settings.admin_overview.ingredients')}</div>
-                          {#if ingredients.length}
-                            <div class="ao-ingredients">
-                              {#each ingredients as ing}
-                                <div class="ao-ingredient">
-                                  <span>{ing.name}</span>
-                                  {#if ing.portion}<span class="ao-row-sub">{ing.portion}</span>{/if}
-                                </div>
+                        <div class="ao-row-right">
+                          <span class="ao-row-kcal">{fmtNum(kcalOf(meal))} <small>{$_('settings.admin_overview.kcal')}</small></span>
+                          {#if figs.length}
+                            <div class="ao-figures">
+                              {#each figs as m}
+                                <span class="ao-fig" title={m.label} aria-label={`${m.label} ${m.value}g`}><b>{m.short}</b>{m.value}g</span>
                               {/each}
                             </div>
-                          {:else}
-                            <p class="ao-empty-line">{$_('settings.admin_overview.no_ingredients')}</p>
                           {/if}
                         </div>
                       </div>
@@ -1277,30 +1450,131 @@
   }
   .ao-truncated .material-symbols-rounded { font-size: 16px; color: var(--accent); flex-shrink: 0; }
 
-  /* Diary days */
-  .ao-day-list { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
-  .ao-day { padding: 12px 14px; gap: 8px; }
-  .ao-day-head {
-    display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap;
+  /* Range overview strip */
+  .ao-range-summary {
+    display: flex; flex-direction: column; gap: 8px;
+    background: var(--surface-1);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 10px 14px;
+    min-width: 0;
   }
-  .ao-day-date { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; color: var(--text-1); }
-  .ao-day-date .material-symbols-rounded { font-size: 17px; color: var(--accent); }
-  .ao-day-head-right { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-  .ao-day-kcal { font-size: 13px; font-weight: 700; color: var(--accent); }
-  .ao-day-items { font-size: 11px; color: var(--text-3); }
-  .ao-day-totals { display: flex; flex-wrap: wrap; gap: 4px 10px; padding-bottom: 4px; border-bottom: 1px solid var(--border); }
+  .ao-rs-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+  .ao-rs-title { font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-3); }
+  .ao-rs-range { font-size: 11px; color: var(--text-3); }
+  .ao-rs-body { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; min-width: 0; }
+  .ao-rs-stats { display: flex; align-items: flex-end; gap: 18px; flex-wrap: wrap; min-width: 0; }
+  .ao-rs-stat { display: flex; flex-direction: column; gap: 1px; }
+  .ao-rs-value { font-size: 18px; font-weight: 700; color: var(--text-1); line-height: 1.15; font-variant-numeric: tabular-nums; }
+  .ao-rs-label { font-size: 10px; color: var(--text-3); text-transform: uppercase; letter-spacing: 0.04em; white-space: nowrap; }
+  .ao-rs-macros { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .ao-rs-macro { font-size: 11px; color: var(--text-3); white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .ao-rs-macro b { font-weight: 700; }
+  .ao-rs-macro.p b { color: var(--macro-protein); }
+  .ao-rs-macro.c b { color: var(--macro-carbs); }
+  .ao-rs-macro.f b { color: var(--macro-fat); }
+  .ao-rs-bars {
+    display: flex; align-items: flex-end; gap: 3px;
+    height: 30px; flex: 1 1 120px; min-width: 90px;
+    padding: 2px 0;
+  }
+  .ao-rs-bar {
+    flex: 1 1 0; min-width: 2px; min-height: 2px;
+    background: linear-gradient(180deg, var(--accent), var(--accent-2));
+    border-radius: 2px 2px 1px 1px;
+    opacity: 0.65;
+  }
+  .ao-rs-bar:last-child { opacity: 1; }
+
+  /* Diary days — one scannable row per day, items behind a disclosure */
+  .ao-day-list { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+  .ao-day { padding: 0; gap: 0; }
+  .ao-day:hover { transform: none; box-shadow: none; }
+  .ao-day-summary {
+    display: flex; align-items: center; flex-wrap: wrap;
+    gap: 6px 12px;
+    padding: 9px 12px;
+    min-width: 0;
+  }
+  .ao-day-date {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-size: 13px; font-weight: 600; color: var(--text-1);
+    min-width: 0; flex: 0 1 auto;
+  }
+  .ao-day-date span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ao-day-date .material-symbols-rounded { font-size: 16px; color: var(--accent); flex-shrink: 0; }
+  .ao-day-macrobar {
+    display: flex; align-items: stretch; gap: 2px;
+    height: 8px; flex: 0 1 120px; min-width: 54px;
+    background: var(--surface-2);
+    border-radius: var(--radius-full);
+    overflow: hidden;
+  }
+  .ao-mb-seg { height: 100%; border-radius: var(--radius-full); }
+  .ao-mb-seg.p { background: var(--macro-protein); }
+  .ao-mb-seg.c { background: var(--macro-carbs); }
+  .ao-mb-seg.f { background: var(--macro-fat); }
+  .ao-mb-empty { flex: 1; height: 100%; background: var(--surface-3); }
+  .ao-day-kcal {
+    display: inline-flex; align-items: baseline; gap: 3px;
+    margin-left: auto;
+    font-size: 17px; font-weight: 700; color: var(--text-1);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  .ao-day-kcal-unit { font-size: 10px; font-weight: 600; color: var(--text-3); }
+  .ao-day-meta { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; }
+  .ao-day-water { display: inline-flex; align-items: center; gap: 2px; font-size: 11px; color: var(--text-3); white-space: nowrap; }
+  .ao-day-water .material-symbols-rounded { font-size: 14px; color: var(--info); }
+  .ao-day-toggle {
+    display: inline-flex; align-items: center; gap: 2px;
+    background: none; border: none; cursor: pointer;
+    font-family: inherit; font-size: 11px; font-weight: 600;
+    color: var(--accent);
+    padding: 3px 2px;
+    border-radius: var(--radius-sm);
+    white-space: nowrap;
+  }
+  .ao-day-toggle:hover { background: var(--accent-dim); }
+  .ao-day-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .ao-day-chevron { font-size: 18px; transition: transform var(--dur-fast) var(--ease-out); }
+  .ao-day-chevron.open { transform: rotate(180deg); }
+  .ao-day-body {
+    display: flex; flex-direction: column; gap: 8px;
+    padding: 10px 12px 12px;
+    border-top: 1px solid var(--border);
+    min-width: 0;
+  }
+  .ao-day-totals { display: flex; flex-wrap: wrap; gap: 4px 10px; }
   .ao-macro { font-size: 11px; color: var(--text-3); white-space: nowrap; }
   .ao-macro b { color: var(--text-2); font-weight: 600; }
   .ao-macro.water b { color: var(--text-2); }
   .ao-macro-row { display: flex; flex-wrap: wrap; gap: 3px 9px; }
 
   .ao-items { display: flex; flex-direction: column; gap: 0; }
-  .ao-item { padding: 8px 0; border-bottom: 1px solid var(--border); min-width: 0; }
-  .ao-item:last-child { border-bottom: none; padding-bottom: 2px; }
-  .ao-item-line { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; min-width: 0; }
-  .ao-item-name { font-size: 13px; font-weight: 500; color: var(--text-1); min-width: 0; overflow-wrap: anywhere; }
-  .ao-item-kcal { font-size: 12px; color: var(--text-2); white-space: nowrap; flex-shrink: 0; }
-  .ao-item-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin-top: 2px; font-size: 11px; color: var(--text-3); }
+  .ao-item {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto auto auto;
+    align-items: baseline;
+    gap: 2px 10px;
+    padding: 5px 0;
+    border-bottom: 1px solid var(--border);
+    min-width: 0;
+  }
+  .ao-item:last-child { border-bottom: none; padding-bottom: 0; }
+  .ao-item-name { font-size: 12px; font-weight: 500; color: var(--text-1); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ao-item-portion { font-size: 11px; color: var(--text-3); white-space: nowrap; }
+  .ao-item-kcal { font-size: 12px; font-weight: 600; color: var(--text-2); white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .ao-item-kcal small { font-size: 9px; font-weight: 500; color: var(--text-3); }
+  .ao-item-figs, .ao-figures { display: inline-flex; align-items: baseline; gap: 6px; white-space: nowrap; }
+  .ao-fig { font-size: 10px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+  .ao-fig b { font-weight: 700; margin-right: 1px; }
+  .ao-item-figs .ao-fig:nth-child(1) b,
+  .ao-figures .ao-fig:nth-child(1) b { color: var(--macro-protein); }
+  .ao-item-figs .ao-fig:nth-child(2) b,
+  .ao-figures .ao-fig:nth-child(2) b { color: var(--macro-carbs); }
+  .ao-item-figs .ao-fig:nth-child(3) b,
+  .ao-figures .ao-fig:nth-child(3) b { color: var(--macro-fat); }
   .ao-chip { font-size: 10px; padding: 1px 7px; }
   .ao-empty-line { font-size: 12px; color: var(--text-3); margin: 2px 0; font-style: italic; }
 
@@ -1330,10 +1604,23 @@
   .ao-row-tags { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
   .ao-row-right { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; flex-shrink: 0; max-width: 46%; }
   .ao-row-kcal { font-size: 13px; font-weight: 700; color: var(--accent); white-space: nowrap; }
+  .ao-row-kcal small { font-size: 9px; font-weight: 500; color: var(--text-3); }
   .ao-meta-list { display: flex; flex-wrap: wrap; gap: 2px 10px; margin-top: 3px; }
   .ao-ingredients { display: flex; flex-direction: column; gap: 2px; }
   .ao-ingredient { display: flex; justify-content: space-between; gap: 10px; font-size: 12px; color: var(--text-2); }
   .ao-ingredient .ao-row-sub { flex-shrink: 0; }
+  .ao-meal-details { margin-top: 4px; }
+  .ao-meal-details summary {
+    display: inline-flex; align-items: center; gap: 3px;
+    list-style: none; cursor: pointer;
+    font-size: 11px; color: var(--text-3);
+    border-radius: var(--radius-sm);
+  }
+  .ao-meal-details summary::-webkit-details-marker { display: none; }
+  .ao-meal-details summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .ao-meal-chevron { font-size: 16px; transition: transform var(--dur-fast) var(--ease-out); }
+  .ao-meal-details[open] .ao-meal-chevron { transform: rotate(90deg); }
+  .ao-meal-details[open] .ao-ingredients { margin-top: 4px; padding-left: 4px; }
 
   @media (max-width: 860px) {
     .ao-layout { grid-template-columns: minmax(0, 1fr); }
@@ -1344,8 +1631,13 @@
     .ao-notice { align-items: flex-start; }
     .ao-row { flex-direction: column; gap: 6px; }
     .ao-row-right { align-items: flex-start; max-width: 100%; }
-    .ao-day-head { align-items: flex-start; flex-direction: column; gap: 3px; }
-    .ao-day-head-right { width: 100%; justify-content: space-between; }
+    .ao-day-date { flex: 1 1 100%; }
+    .ao-day-macrobar { flex: 1 1 80px; min-width: 40px; }
+    .ao-day-kcal { margin-left: 0; }
+    .ao-day-meta { flex: 1 1 100%; justify-content: flex-start; }
+    .ao-day-toggle { margin-left: auto; }
+    .ao-rs-stats { gap: 12px; }
+    .ao-rs-bars { flex-basis: 100%; }
     .ao-range-field { flex-basis: 100%; min-width: 0; }
     .ao-profile { padding: 12px; }
     .ao-count-grid { grid-template-columns: repeat(auto-fit, minmax(60px, 1fr)); }
